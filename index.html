@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>數字配對消除 - 挑戰模式</title>
+    <title>動物配對消除 - 挑戰模式</title>
     <style>
         * {
             margin: 0;
@@ -12,7 +12,7 @@
         }
         
         body {
-            font-family: 'Arial', sans-serif;
+            font-family: 'Arial', 'Microsoft JhengHei', sans-serif;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             min-height: 100vh;
             display: flex;
@@ -362,7 +362,7 @@
 <body>
     <div class="game-container">
         <div class="header">
-            <h1>🎮 數字配對挑戰</h1>
+            <h1>🎮 動物配對挑戰</h1>
         </div>
         
         <div class="mode-selector">
@@ -411,7 +411,6 @@
         </div>
     </div>
     
-    <!-- 遊戲結束視窗 -->
     <div class="modal" id="gameOverModal">
         <div class="modal-content">
             <h2 id="gameOverTitle">🎉 遊戲結束!</h2>
@@ -433,7 +432,6 @@
         </div>
     </div>
     
-    <!-- 排行榜視窗 -->
     <div class="modal" id="leaderboardModal">
         <div class="modal-content">
             <h2>🏆 排行榜</h2>
@@ -510,7 +508,7 @@
             renderGrid();
             updateScore();
             
-            setTimeout(() => {
+            setTimeout(function() {
                 const firstTile = document.querySelector('.tile');
                 if (firstTile) firstTile.focus();
             }, 100);
@@ -519,7 +517,7 @@
         function selectMode(mode) {
             gameMode = mode;
             
-            document.querySelectorAll('.mode-btn').forEach(btn => {
+            document.querySelectorAll('.mode-btn').forEach(function(btn) {
                 btn.classList.remove('active');
             });
             
@@ -538,16 +536,16 @@
                 modeInfo.innerHTML = '<strong>經典模式</strong>玩到沒有配對為止,挑戰最高分!<br><small>鍵盤: 方向鍵移動 | 空白鍵/Enter選擇</small>';
                 extraLabel.textContent = '連擊';
             } else if (gameMode === 'score') {
-                modeInfo.innerHTML = `<strong>1000分挑戰</strong>最快達到${SCORE_TARGET}分!<br><small>鍵盤: 方向鍵移動 | 空白鍵/Enter選擇</small>`;
+                modeInfo.innerHTML = '<strong>1000分挑戰</strong>最快達到' + SCORE_TARGET + '分!<br><small>鍵盤: 方向鍵移動 | 空白鍵/Enter選擇</small>';
                 extraLabel.textContent = '時間';
             } else if (gameMode === 'time') {
-                modeInfo.innerHTML = `<strong>2分鐘挑戰</strong>在${TIME_LIMIT}秒內獲得最高分!<br><small>鍵盤: 方向鍵移動 | 空白鍵/Enter選擇</small>`;
+                modeInfo.innerHTML = '<strong>2分鐘挑戰</strong>在' + TIME_LIMIT + '秒內獲得最高分!<br><small>鍵盤: 方向鍵移動 | 空白鍵/Enter選擇</small>';
                 extraLabel.textContent = '剩餘';
             }
         }
 
         function startTimer() {
-            timerInterval = setInterval(() => {
+            timerInterval = setInterval(function() {
                 timer--;
                 updateScore();
                 
@@ -561,21 +559,21 @@
         function formatTime(seconds) {
             const mins = Math.floor(seconds / 60);
             const secs = seconds % 60;
-            return `${mins}:${secs.toString().padStart(2, '0')}`;
+            return mins + ':' + (secs < 10 ? '0' : '') + secs;
         }
 
         function renderGrid() {
             const grid = document.getElementById('grid');
             grid.innerHTML = '';
             
-            tiles.forEach((animalIndex, index) => {
+            tiles.forEach(function(animalIndex, index) {
                 const tile = document.createElement('button');
                 tile.className = 'tile';
                 tile.textContent = ANIMALS[animalIndex];
                 tile.type = 'button';
-                tile.onclick = () => selectTile(index);
+                tile.onclick = function() { selectTile(index); };
                 tile.tabIndex = 0;
-                tile.onkeydown = (e) => handleKeyPress(e, index);
+                tile.onkeydown = function(e) { handleKeyPress(e, index); };
                 grid.appendChild(tile);
             });
         }
@@ -634,7 +632,7 @@
             
             if (combo >= 2) {
                 const multiplier = getComboMultiplier(combo);
-                multiplierElement.textContent = `x${multiplier} 倍`;
+                multiplierElement.textContent = 'x' + multiplier + ' 倍';
                 if (gameMode === 'classic') {
                     extraValue.classList.add('combo-active');
                 }
@@ -656,7 +654,7 @@
                 clearTimeout(comboTimeout);
             }
             
-            comboTimeout = setTimeout(() => {
+            comboTimeout = setTimeout(function() {
                 resetCombo();
             }, COMBO_TIME_LIMIT);
         }
@@ -702,7 +700,7 @@
                     const matchedIndex1 = selectedTile;
                     const matchedIndex2 = index;
                     
-                    setTimeout(() => {
+                    setTimeout(function() {
                         tiles[matchedIndex1] = Math.floor(Math.random() * ANIMALS.length);
                         tiles[matchedIndex2] = Math.floor(Math.random() * ANIMALS.length);
                         
@@ -712,7 +710,7 @@
                             timer = Math.floor((Date.now() - startTime) / 1000);
                             endGame();
                         } else if (gameMode === 'classic' && !hasValidMoves()) {
-                            setTimeout(() => endGame(), 500);
+                            setTimeout(function() { endGame(); }, 500);
                         } else {
                             canClick = true;
                         }
@@ -729,11 +727,11 @@
 
         function hasValidMoves() {
             const counts = {};
-            tiles.forEach(animalIndex => {
+            tiles.forEach(function(animalIndex) {
                 counts[animalIndex] = (counts[animalIndex] || 0) + 1;
             });
             
-            return Object.values(counts).some(count => count >= 2);
+            return Object.values(counts).some(function(count) { return count >= 2; });
         }
 
         function updateScore() {
@@ -767,13 +765,13 @@
             
             if (gameMode === 'score') {
                 title.textContent = '🎉 達成目標!';
-                stats.innerHTML = `完成時間: <strong>${formatTime(timer)}</strong><br>總移動: ${moves} 次<br>最高連擊: ${maxCombo}x`;
+                stats.innerHTML = '完成時間: <strong>' + formatTime(timer) + '</strong><br>總移動: ' + moves + ' 次<br>最高連擊: ' + maxCombo + 'x';
             } else if (gameMode === 'time') {
                 title.textContent = '⏰ 時間到!';
-                stats.innerHTML = `最終分數: <strong>${score}</strong><br>總移動: ${moves} 次<br>最高連擊: ${maxCombo}x`;
+                stats.innerHTML = '最終分數: <strong>' + score + '</strong><br>總移動: ' + moves + ' 次<br>最高連擊: ' + maxCombo + 'x';
             } else {
                 title.textContent = '🎉 遊戲結束!';
-                stats.innerHTML = `總移動: ${moves} 次<br>最高連擊: ${maxCombo}x`;
+                stats.innerHTML = '總移動: ' + moves + ' 次<br>最高連擊: ' + maxCombo + 'x';
             }
             
             document.getElementById('finalScore').textContent = gameMode === 'score' ? formatTime(timer) : score;
@@ -785,7 +783,7 @@
 
         async function checkLeaderboardEntry() {
             try {
-                const result = await window.storage.list(`leaderboard_${gameMode}:`);
+                const result = await window.storage.list('leaderboard_' + gameMode + ':');
                 const entries = [];
                 
                 if (result && result.keys) {
@@ -801,64 +799,7 @@
                     }
                 }
                 
-                entries.sort((a, b) => {
-                    if (mode === 'score') {
-                        return a.time - b.time;
-                    } else {
-                        return b.score - a.score;
-                    }
-                });
-                
-                const top20 = entries.slice(0, 20);
-                
-                if (top20.length === 0) {
-                    content.innerHTML = '<p style="color: #999; padding: 40px;">還沒有排行榜記錄<br>快來成為第一名!</p>';
-                    return;
-                }
-                
-                let html = '<table class="leaderboard-table"><thead><tr><th>排名</th><th>玩家</th>';
-                if (mode === 'score') {
-                    html += '<th>時間</th>';
-                } else {
-                    html += '<th>分數</th>';
-                }
-                html += '<th>連擊</th></tr></thead><tbody>';
-                
-                top20.forEach((entry, index) => {
-                    const medal = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : '';
-                    html += `<tr>
-                        <td><span class="rank-medal">${medal}</span>${index + 1}</td>
-                        <td>${entry.name}</td>
-                        <td><strong>${mode === 'score' ? formatTime(entry.time) : entry.score}</strong></td>
-                        <td>${entry.combo}x</td>
-                    </tr>`;
-                });
-                
-                html += '</tbody></table>';
-                content.innerHTML = html;
-                
-            } catch (error) {
-                console.error('載入排行榜失敗:', error);
-                content.innerHTML = '<p style="color: #f5576c;">載入失敗,請稍後再試</p>';
-            }
-        }
-
-        function newGame() {
-            initGame();
-        }
-
-        initGame();
-    </script>
-</body>
-</html>(JSON.parse(data.value));
-                            }
-                        } catch (e) {
-                            console.log('讀取排行榜項目失敗:', e);
-                        }
-                    }
-                }
-                
-                entries.sort((a, b) => {
+                entries.sort(function(a, b) {
                     if (gameMode === 'score') {
                         return a.time - b.time;
                     } else {
@@ -900,7 +841,7 @@
             
             try {
                 await window.storage.set(
-                    `leaderboard_${gameMode}:${timestamp}`,
+                    'leaderboard_' + gameMode + ':' + timestamp,
                     JSON.stringify(entry)
                 );
                 
@@ -932,7 +873,7 @@
         }
 
         async function switchLeaderboard(mode) {
-            document.querySelectorAll('.tab-btn').forEach(btn => {
+            document.querySelectorAll('.tab-btn').forEach(function(btn) {
                 btn.classList.remove('active');
             });
             event.target.classList.add('active');
@@ -945,7 +886,7 @@
             content.innerHTML = '<p>載入中...</p>';
             
             try {
-                const result = await window.storage.list(`leaderboard_${mode}:`);
+                const result = await window.storage.list('leaderboard_' + mode + ':');
                 const entries = [];
                 
                 if (result && result.keys) {
@@ -953,4 +894,56 @@
                         try {
                             const data = await window.storage.get(key);
                             if (data && data.value) {
-                                entries.push
+                                entries.push(JSON.parse(data.value));
+                            }
+                        } catch (e) {
+                            console.log('讀取排行榜項目失敗:', e);
+                        }
+                    }
+                }
+                
+                entries.sort(function(a, b) {
+                    if (mode === 'score') {
+                        return a.time - b.time;
+                    } else {
+                        return b.score - a.score;
+                    }
+                });
+                
+                const top20 = entries.slice(0, 20);
+                
+                if (top20.length === 0) {
+                    content.innerHTML = '<p style="color: #999; padding: 40px;">還沒有排行榜記錄<br>快來成為第一名!</p>';
+                    return;
+                }
+                
+                let html = '<table class="leaderboard-table"><thead><tr><th>排名</th><th>玩家</th>';
+                if (mode === 'score') {
+                    html += '<th>時間</th>';
+                } else {
+                    html += '<th>分數</th>';
+                }
+                html += '<th>連擊</th></tr></thead><tbody>';
+                
+                top20.forEach(function(entry, index) {
+                    const medal = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : '';
+                    html += '<tr><td><span class="rank-medal">' + medal + '</span>' + (index + 1) + '</td><td>' + entry.name + '</td><td><strong>' + (mode === 'score' ? formatTime(entry.time) : entry.score) + '</strong></td><td>' + entry.combo + 'x</td></tr>';
+                });
+                
+                html += '</tbody></table>';
+                content.innerHTML = html;
+                
+            } catch (error) {
+                console.error('載入排行榜失敗:', error);
+                content.innerHTML = '<p style="color: #f5576c;">載入失敗,請稍後再試</p>';
+            }
+        }
+
+        function newGame() {
+            initGame();
+        }
+
+        initGame();
+    </script>
+</body>
+</html>
