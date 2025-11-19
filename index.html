@@ -1,733 +1,724 @@
-<!DOCTYPE html>
-<html lang="zh-TW">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>動物配對消除 - 免費線上小遊戲</title>
-    <meta name="description" content="免費好玩的動物配對消除遊戲!挑戰三種模式,衝刺排行榜,支援鍵盤操作。立即開始遊玩!">
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { Sparkles, Bomb, RefreshCw, Trophy, Play, Skull, AlertTriangle, Star, Zap, ShoppingCart, Video, X, Timer } from 'lucide-react';
+
+// --- 遊戲設定 ---
+const GRID_SIZE = 8;
+const ANIMAL_TYPES = ['🦁', '🐼', '🐸', '🐷', '🐵', '🦊', '🐔'];
+const SWIPE_THRESHOLD = 30; 
+
+// --- 數值平衡系統 (Level 1 - 100) ---
+const getLevelThreshold = (level) => {
+  // 簡單的指數成長曲線: Base * Level^1.5
+  return Math.floor(1500 * Math.pow(level, 1.2));
+};
+
+const getTimeDecayRate = (level) => {
+  // 隨等級增加時間流逝速度，Level 1 = 1.0x, Level 50 = 3.5x, Level 100 = 6.0x
+  return 1 + (level - 1) * 0.05;
+};
+
+const getLevelTimeBonus = (level) => {
+  // 升級補時：前期補得多，後期固定補一點點，保持生存壓力
+  if (level <= 10) return 20;
+  if (level <= 30) return 15;
+  if (level <= 50) return 10;
+  return 5;
+};
+
+// --- 輔助函數 ---
+const getRandomAnimal = () => ANIMAL_TYPES[Math.floor(Math.random() * ANIMAL_TYPES.length)];
+
+const createInitialBoard = () => {
+  const board = [];
+  for (let r = 0; r < GRID_SIZE; r++) {
+    const row = [];
+    for (let c = 0; c < GRID_SIZE; c++) {
+      let animal;
+      do {
+        animal = getRandomAnimal();
+      } while (
+        (c >= 2 && row[c - 1] === animal && row[c - 2] === animal) ||
+        (r >= 2 && board[r - 1][c] === animal && board[r - 2][c] === animal)
+      );
+      row.push(animal);
+    }
+    board.push(row);
+  }
+  return board;
+};
+
+const checkMatches = (board) => {
+  const matched = new Set();
+  // 橫向
+  for (let r = 0; r < GRID_SIZE; r++) {
+    for (let c = 0; c < GRID_SIZE - 2; c++) {
+      const animal = board[r][c];
+      if (!animal) continue;
+      if (animal === board[r][c + 1] && animal === board[r][c + 2]) {
+        matched.add(`${r},${c}`);
+        matched.add(`${r},${c + 1}`);
+        matched.add(`${r},${c + 2}`);
+        let k = 3;
+        while (c + k < GRID_SIZE && board[r][c + k] === animal) {
+          matched.add(`${r},${c + k}`);
+          k++;
+        }
+      }
+    }
+  }
+  // 縱向
+  for (let r = 0; r < GRID_SIZE - 2; r++) {
+    for (let c = 0; c < GRID_SIZE; c++) {
+      const animal = board[r][c];
+      if (!animal) continue;
+      if (animal === board[r + 1][c] && animal === board[r + 2][c]) {
+        matched.add(`${r},${c}`);
+        matched.add(`${r + 1},${c}`);
+        matched.add(`${r + 2},${c}`);
+        let k = 3;
+        while (r + k < GRID_SIZE && board[r + k][c] === animal) {
+          matched.add(`${r + k},${c}`);
+          k++;
+        }
+      }
+    }
+  }
+  return matched;
+};
+
+export default function App() {
+  // --- 狀態 ---
+  const [board, setBoard] = useState(createInitialBoard);
+  const [score, setScore] = useState(0);
+  const [coins, setCoins] = useState(1000); 
+  const [level, setLevel] = useState(1);
+  const [timeLeft, setTimeLeft] = useState(60);
+  const [gameState, setGameState] = useState('start'); 
+  const [isProcessing, setIsProcessing] = useState(false); // 全局鎖
+  const [message, setMessage] = useState(null); 
+  
+  // --- 動畫相關狀態 ---
+  // 交換動畫: { r1, c1, r2, c2, status: 'swap' | 'revert' }
+  const [swapAnim, setSwapAnim] = useState(null);
+  // 消除動畫: Set of `${r},${c}`
+  const [dyingTiles, setDyingTiles] = useState(new Set());
+  // 特效列表
+  const [effects, setEffects] = useState([]); 
+  const effectIdCounter = useRef(0);
+
+  const [items, setItems] = useState({ bomb: 1, magic: 1, shuffle: 1 });
+  const [activeItem, setActiveItem] = useState(null);
+
+  const dragStart = useRef(null); 
+
+  // --- 遊戲迴圈 ---
+  useEffect(() => {
+    let timerInterval;
+    if (gameState === 'playing' && timeLeft > 0) {
+      const decayRate = getTimeDecayRate(level);
+      timerInterval = setInterval(() => {
+        setTimeLeft(prev => {
+          if (prev <= 0) {
+            setGameState('gameover');
+            setCoins(c => c + Math.floor(score / 100)); 
+            return 0;
+          }
+          return Math.max(0, prev - (0.1 * decayRate));
+        });
+      }, 100);
+    }
+    return () => clearInterval(timerInterval);
+  }, [gameState, timeLeft, level]);
+
+  // 升級邏輯
+  useEffect(() => {
+    const nextThreshold = getLevelThreshold(level);
+    if (score >= nextThreshold) {
+      const nextLevel = level + 1;
+      setLevel(nextLevel);
+      
+      const bonusTime = getLevelTimeBonus(nextLevel);
+      setTimeLeft(prev => Math.min(prev + bonusTime, 60)); // 上限60秒
+      
+      showMessage(`LEVEL ${nextLevel}!`, 'text-yellow-400', 2);
+      
+      // 視覺上的獎勵
+      addEffect(3, 3, 'levelup'); // 在螢幕中間放個特效
+    }
+  }, [score, level]);
+
+  // --- 視覺與音效 ---
+  const showMessage = (text, colorClass = 'text-white', scale = 1) => {
+    setMessage({ text, color: colorClass, scale });
+    setTimeout(() => setMessage(null), 1500);
+  };
+
+  const addEffect = (r, c, type) => {
+    const id = effectIdCounter.current++;
+    setEffects(prev => [...prev, { id, r, c, type }]);
+    setTimeout(() => {
+      setEffects(prev => prev.filter(e => e.id !== id));
+    }, 600);
+  };
+
+  // --- 核心邏輯 ---
+
+  const processBoard = async (currentBoard, comboCount = 0) => {
+    setIsProcessing(true);
+    const matches = checkMatches(currentBoard);
     
-    <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-6840520691227023" crossorigin="anonymous"></script>
+    if (matches.size > 0) {
+      // 1. 播放消除動畫 (等待消失)
+      setDyingTiles(matches);
+      
+      // 增加分數 & 時間
+      const comboMultiplier = 1 + (comboCount * 0.5);
+      const basePoints = matches.size * 20;
+      const points = Math.floor(basePoints * comboMultiplier);
+      setScore(prev => prev + points);
+      
+      // 難度調整：連鎖給的時間隨著Combo遞減，避免無限刷時間
+      const timeGain = Math.max(1, (matches.size * 0.5) / (comboCount + 1)); 
+      setTimeLeft(prev => Math.min(prev + timeGain, 60));
+
+      if (comboCount > 0) showMessage(`${comboCount} COMBO!`, 'text-yellow-300', 1 + comboCount * 0.1);
+      else if (matches.size >= 5) showMessage('Great!', 'text-purple-300', 1.2);
+
+      // 觸發特效
+      matches.forEach(coord => {
+        const [r, c] = coord.split(',').map(Number);
+        addEffect(r, c, 'sparkle');
+      });
+
+      // 等待消除動畫 (300ms)
+      await new Promise(r => setTimeout(r, 300));
+      setDyingTiles(new Set()); // 清除動畫標記
+
+      // 2. 更新盤面 (移除)
+      const newBoard = currentBoard.map(row => [...row]);
+      matches.forEach(coord => {
+        const [r, c] = coord.split(',').map(Number);
+        newBoard[r][c] = null;
+      });
+      setBoard([...newBoard]);
+      
+      await new Promise(r => setTimeout(r, 150)); // 短暫留白
+
+      // 3. 掉落 (Gravity)
+      for (let c = 0; c < GRID_SIZE; c++) {
+        let writeRow = GRID_SIZE - 1;
+        for (let r = GRID_SIZE - 1; r >= 0; r--) {
+          if (newBoard[r][c] !== null) {
+            newBoard[writeRow][c] = newBoard[r][c];
+            if (writeRow !== r) newBoard[r][c] = null;
+            writeRow--;
+          }
+        }
+        for (let r = writeRow; r >= 0; r--) {
+          newBoard[r][c] = getRandomAnimal();
+        }
+      }
+      setBoard(newBoard);
+      
+      // 等待掉落動畫 (這裡React重繪會瞬間改變，可優化成真實掉落，暫以延遲模擬節奏)
+      await new Promise(r => setTimeout(r, 300));
+      
+      // 4. 遞迴檢查
+      await processBoard(newBoard, comboCount + 1);
+    } else {
+      setIsProcessing(false);
+    }
+  };
+
+  // --- 玩家互動 ---
+  const handlePointerDown = (e, r, c) => {
+    if (gameState !== 'playing' || isProcessing) return;
+    if (activeItem) {
+       handleItemClickOnBoard(r, c);
+       return;
+    }
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    dragStart.current = { r, c, x: clientX, y: clientY };
+  };
+
+  const handlePointerUp = (e) => {
+    if (!dragStart.current || gameState !== 'playing' || isProcessing) return;
+    const clientX = e.changedTouches ? e.changedTouches[0].clientX : e.clientX;
+    const clientY = e.changedTouches ? e.changedTouches[0].clientY : e.clientY;
+    const dx = clientX - dragStart.current.x;
+    const dy = clientY - dragStart.current.y;
+    const { r, c } = dragStart.current;
+    dragStart.current = null; 
+
+    if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > SWIPE_THRESHOLD) {
+      attemptSwap(r, c, r, c + (dx > 0 ? 1 : -1));
+    } else if (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > SWIPE_THRESHOLD) {
+      attemptSwap(r, c, r + (dy > 0 ? 1 : -1), c);
+    }
+  };
+
+  const attemptSwap = async (r1, c1, r2, c2) => {
+    if (r2 < 0 || r2 >= GRID_SIZE || c2 < 0 || c2 >= GRID_SIZE) return;
+
+    setIsProcessing(true);
+
+    // 1. 播放交換動畫 (Swap)
+    setSwapAnim({ r1, c1, r2, c2, status: 'swap' });
+    await new Promise(r => setTimeout(r, 250)); // 等待 CSS 動畫
+
+    // 2. 邏輯檢查
+    const tempBoard = board.map(row => [...row]);
+    [tempBoard[r1][c1], tempBoard[r2][c2]] = [tempBoard[r2][c2], tempBoard[r1][c1]];
     
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
+    const matches = checkMatches(tempBoard);
+
+    if (matches.size > 0) {
+      // 成功！
+      setBoard(tempBoard); // 更新真實資料
+      setSwapAnim(null);   // 移除動畫狀態 (DOM會重繪成交換後的位置)
+      await processBoard(tempBoard);
+    } else {
+      // 失敗！播放還原動畫 (Revert)
+      setSwapAnim({ r1, c1, r2, c2, status: 'revert' });
+      await new Promise(r => setTimeout(r, 250)); // 等待還原動畫
+      setSwapAnim(null);
+      setIsProcessing(false);
+    }
+  };
+
+  // --- 道具邏輯 ---
+  const handleItemClickOnBoard = (r, c) => {
+    if (activeItem === 'bomb') useBomb(r, c);
+    else if (activeItem === 'magic') useMagic(r, c);
+  };
+
+  const useBomb = async (r, c) => {
+    setIsProcessing(true);
+    setItems(prev => ({ ...prev, bomb: prev.bomb - 1 }));
+    setActiveItem(null);
+
+    // 爆炸特效區域
+    for (let i = r - 1; i <= r + 1; i++) {
+      for (let j = c - 1; j <= c + 1; j++) {
+        if (i >= 0 && i < GRID_SIZE && j >= 0 && j < GRID_SIZE) {
+           addEffect(i, j, 'explosion');
         }
-        
-        body {
-            font-family: 'Arial', 'Microsoft JhengHei', sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            padding: 20px;
+      }
+    }
+    showMessage('BOOM!', 'text-red-500', 2);
+    await new Promise(resolve => setTimeout(resolve, 400));
+
+    const newBoard = board.map(row => [...row]);
+    for (let i = r - 1; i <= r + 1; i++) {
+      for (let j = c - 1; j <= c + 1; j++) {
+        if (i >= 0 && i < GRID_SIZE && j >= 0 && j < GRID_SIZE) {
+          newBoard[i][j] = null;
         }
-        
-        .game-container {
-            background: white;
-            border-radius: 20px;
-            padding: 30px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-            max-width: 450px;
-            width: 100%;
+      }
+    }
+    setBoard(newBoard);
+    await new Promise(r => setTimeout(r, 300));
+    
+    // 簡單重填邏輯 (為了簡潔，不與 processBoard 共用，但邏輯一樣)
+    for (let col = 0; col < GRID_SIZE; col++) {
+      let writeRow = GRID_SIZE - 1;
+      for (let row = GRID_SIZE - 1; row >= 0; row--) {
+        if (newBoard[row][col] !== null) {
+          newBoard[writeRow][col] = newBoard[row][col];
+          if (writeRow !== row) newBoard[row][col] = null;
+          writeRow--;
         }
-        
-        .header {
-            text-align: center;
-            margin-bottom: 20px;
+      }
+      for (let row = writeRow; row >= 0; row--) {
+        newBoard[row][col] = getRandomAnimal();
+      }
+    }
+    setBoard(newBoard);
+    await new Promise(r => setTimeout(r, 300));
+    await processBoard(newBoard);
+  };
+
+  const useMagic = async (r, c) => {
+    setIsProcessing(true);
+    setItems(prev => ({ ...prev, magic: prev.magic - 1 }));
+    setActiveItem(null);
+
+    const targetType = board[r][c];
+    const dying = new Set();
+    let count = 0;
+
+    board.forEach((row, i) => row.forEach((cell, j) => {
+      if (cell === targetType) {
+        dying.add(`${i},${j}`);
+        addEffect(i, j, 'sparkle');
+        count++;
+      }
+    }));
+    
+    setDyingTiles(dying);
+    showMessage(`Cleared ${count}!`, 'text-purple-400', 1.2);
+    await new Promise(r => setTimeout(r, 400));
+
+    const newBoard = board.map(row => row.map(cell => cell === targetType ? null : cell));
+    setDyingTiles(new Set());
+    setBoard(newBoard);
+
+    await new Promise(r => setTimeout(r, 200));
+    
+    // 填充
+    for (let col = 0; col < GRID_SIZE; col++) {
+      let writeRow = GRID_SIZE - 1;
+      for (let row = GRID_SIZE - 1; row >= 0; row--) {
+        if (newBoard[row][col] !== null) {
+          newBoard[writeRow][col] = newBoard[row][col];
+          if (writeRow !== row) newBoard[row][col] = null;
+          writeRow--;
         }
-        
-        h1 {
-            color: #667eea;
-            font-size: 28px;
-            margin-bottom: 10px;
+      }
+      for (let row = writeRow; row >= 0; row--) {
+        newBoard[row][col] = getRandomAnimal();
+      }
+    }
+    setBoard(newBoard);
+    await new Promise(r => setTimeout(r, 300));
+    await processBoard(newBoard);
+  };
+
+  const useShuffle = async () => {
+    if (items.shuffle <= 0) return;
+    setIsProcessing(true);
+    setItems(prev => ({ ...prev, shuffle: prev.shuffle - 1 }));
+    showMessage('Shuffle!', 'text-blue-400');
+    
+    // 洗牌動畫
+    setSwapAnim({ isShuffling: true });
+    await new Promise(r => setTimeout(r, 500));
+    
+    setBoard(createInitialBoard());
+    setSwapAnim(null);
+    setIsProcessing(false);
+  };
+
+  // --- 樣式計算 (核心：負責處理 CSS Transform) ---
+  const getTileStyle = (r, c) => {
+    let style = {};
+    let className = "transition-transform duration-200 absolute inset-0 flex items-center justify-center ";
+
+    // 1. 處理消失動畫
+    if (dyingTiles.has(`${r},${c}`)) {
+      style.transform = 'scale(0) rotate(180deg)';
+      style.opacity = 0;
+      className += " duration-300"; // 消失稍微慢一點
+    } 
+    // 2. 處理交換動畫
+    else if (swapAnim) {
+      if (swapAnim.isShuffling) {
+         style.transform = `translate(${Math.random()*20-10}px, ${Math.random()*20-10}px) rotate(${Math.random()*360}deg)`;
+         style.opacity = 0.5;
+      } else {
+        const { r1, c1, r2, c2, status } = swapAnim;
+        const isSource = r === r1 && c === c1;
+        const isTarget = r === r2 && c === c2;
+
+        if (isSource || isTarget) {
+          // 計算位移：目標位置 - 當前位置
+          // 橫向 X: (目標Column - 當前Column) * 100%
+          // 縱向 Y: (目標Row - 當前Row) * 100%
+          
+          let targetR = isSource ? r2 : r1;
+          let targetC = isSource ? c2 : c1;
+
+          // 如果是 Revert 階段，我們的邏輯位置還沒變，但視覺上要從「遠方」回來
+          // 這裡為了簡化，Revert 其實就是再播一次 Swap 回來
+          // 在 attemptSwap 裡我們是用 status 控制，Revert 時我們不改 board，再次呼叫這個 logic 讓它看起來像移動
+          
+          if (status === 'swap') {
+             const xDiff = (targetC - c) * 100;
+             const yDiff = (targetR - r) * 100;
+             style.transform = `translate(${xDiff}%, ${yDiff}%)`;
+             style.zIndex = 10; // 確保移動時在上方
+          } else if (status === 'revert') {
+             // Revert 時，我們其實是希望它從「偏移位置」回到「0,0」
+             // 但 React 渲染沒有變，所以我們需要先讓它瞬間「瞬移」到錯誤位置，再動畫回 0,0
+             // 簡單做法：直接再播一次「反向」動畫回到 0,0 是不行的，因為 DOM 位置沒變。
+             // 更好的做法：Revert 狀態下，我們把位移設為 0，但給它一個來自錯誤位置的 keyframe，
+             // 或是簡單點：Revert 時，我們呈現的是「移過去又移回來」。
+             // 在這裡我們簡單處理：Revert 狀態時，我們模擬「從目標滑回來」
+             // 但因為 attemptSwap 裡的 await，UI 會停留在 swap 狀態，然後進入 revert。
+             // 所以 revert 時，我們只要把 transform 設回 none 即可？
+             // 不，swap 狀態結束後 transform 其實還在。
+             // 為了視覺上的來回，我們讓 revert 狀態把 transform 設為 0，並確保有 transition。
+             style.transform = 'translate(0, 0)';
+             // 但因為之前的狀態是 translate(100%)，現在設為 0，就會有滑回來的效果！
+          }
         }
-        
-        .mode-selector {
-            display: flex;
-            gap: 10px;
-            margin-bottom: 20px;
-        }
-        
-        .mode-btn {
-            flex: 1;
-            padding: 15px 10px;
-            border: 2px solid #667eea;
-            background: white;
-            border-radius: 10px;
-            font-size: 14px;
-            font-weight: bold;
-            color: #667eea;
-            cursor: pointer;
-            transition: all 0.3s ease;
-        }
-        
-        .mode-btn:hover {
-            transform: translateY(-2px);
-        }
-        
-        .mode-btn.active {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-        }
-        
-        .mode-info {
-            background: #fff3cd;
-            padding: 12px;
-            border-radius: 8px;
-            font-size: 12px;
-            color: #856404;
-            margin-bottom: 15px;
-            text-align: center;
-            line-height: 1.4;
-        }
-        
-        .mode-info strong {
-            display: block;
-            margin-bottom: 5px;
-            font-size: 15px;
-        }
-        
-        .score-board {
-            display: flex;
-            justify-content: space-around;
-            margin-bottom: 20px;
-            padding: 15px;
-            background: #f7f7f7;
-            border-radius: 10px;
-        }
-        
-        .score-item {
-            text-align: center;
-        }
-        
-        .score-label {
-            font-size: 12px;
-            color: #666;
-            margin-bottom: 5px;
-        }
-        
-        .score-value {
-            font-size: 24px;
-            font-weight: bold;
-            color: #667eea;
-        }
-        
-        .score-value.combo-active {
-            color: #f5576c;
-            animation: pulse 0.5s ease;
-        }
-        
-        @keyframes pulse {
-            0%, 100% { transform: scale(1); }
-            50% { transform: scale(1.2); }
-        }
-        
-        .combo-multiplier {
-            font-size: 14px;
-            color: #f5576c;
-            font-weight: bold;
-            margin-top: 5px;
-        }
-        
-        .score-value.timer {
-            color: #f5576c;
-        }
-        
-        .warning-box {
-            background: #ff6b6b;
-            color: white;
-            padding: 10px;
-            border-radius: 8px;
-            text-align: center;
-            font-weight: bold;
-            margin-bottom: 15px;
-            animation: blink 1s infinite;
-        }
-        
-        @keyframes blink {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.7; }
-        }
-        
-        .grid {
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 8px;
-            margin-bottom: 20px;
-            min-height: 280px;
-        }
-        
-        .tile {
-            aspect-ratio: 1;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            border: none;
-            border-radius: 10px;
-            font-size: 40px;
-            color: white;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            line-height: 1;
-            padding: 0;
-        }
-        
-        .tile:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 8px 12px rgba(0,0,0,0.2);
-        }
-        
-        .tile:focus {
-            outline: 3px solid #f5576c;
-            outline-offset: -3px;
-        }
-        
-        .tile.selected {
-            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
-            transform: scale(0.95);
-        }
-        
-        .tile.matched {
-            background: #4CAF50;
-            animation: match 0.5s ease;
-        }
-        
-        .tile.bomb {
-            background: linear-gradient(135deg, #ff4757 0%, #d63031 100%);
-            animation: bombPulse 1s infinite;
-        }
-        
-        @keyframes bombPulse {
-            0%, 100% { transform: scale(1); }
-            50% { transform: scale(1.1); }
-        }
-        
-        @keyframes match {
-            0% { transform: scale(1); }
-            50% { transform: scale(1.2) rotate(10deg); }
-            100% { transform: scale(0); opacity: 0; }
-        }
-        
-        .controls {
-            display: flex;
-            gap: 10px;
-        }
-        
-        button {
-            flex: 1;
-            padding: 15px;
-            border: none;
-            border-radius: 10px;
-            font-size: 16px;
-            font-weight: bold;
-            cursor: pointer;
-            transition: all 0.3s ease;
-        }
-        
-        .btn-new-game {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-        }
-        
-        .btn-new-game:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
-        }
-        
-        .btn-leaderboard {
-            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
-            color: white;
-        }
-        
-        .modal {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0,0,0,0.8);
-            display: none;
-            justify-content: center;
-            align-items: center;
-            z-index: 1000;
-        }
-        
-        .modal.show {
-            display: flex;
-        }
-        
-        .modal-content {
-            background: white;
-            padding: 40px;
-            border-radius: 20px;
-            text-align: center;
-            max-width: 90%;
-            max-height: 80vh;
-            overflow-y: auto;
-        }
-        
-        .modal-content h2 {
-            color: #667eea;
-            font-size: 32px;
-            margin-bottom: 20px;
-        }
-        
-        .final-score {
-            font-size: 48px;
-            font-weight: bold;
-            color: #f5576c;
-            margin: 20px 0;
-        }
-        
-        .name-input-section {
-            margin: 20px 0;
-            padding: 20px;
-            background: #f7f7f7;
-            border-radius: 10px;
-        }
-        
-        .name-input {
-            width: 100%;
-            padding: 12px;
-            font-size: 16px;
-            border: 2px solid #667eea;
-            border-radius: 8px;
-            margin-bottom: 10px;
-        }
-        
-        .submit-score-btn {
-            width: 100%;
-            padding: 12px;
-            background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%);
-            color: white;
-            border: none;
-            border-radius: 8px;
-            font-size: 16px;
-            font-weight: bold;
-            cursor: pointer;
-        }
-        
-        .leaderboard-table {
-            width: 100%;
-            margin: 20px 0;
-            border-collapse: collapse;
-        }
-        
-        .leaderboard-table th,
-        .leaderboard-table td {
-            padding: 12px;
-            text-align: left;
-            border-bottom: 1px solid #ddd;
-        }
-        
-        .leaderboard-table th {
-            background: #667eea;
-            color: white;
-        }
-        
-        .tab-buttons {
-            display: flex;
-            gap: 10px;
-            margin-bottom: 20px;
-        }
-        
-        .tab-btn {
-            flex: 1;
-            padding: 10px;
-            background: #f7f7f7;
-            border: 2px solid #ddd;
-            border-radius: 8px;
-            cursor: pointer;
-            font-weight: bold;
-        }
-        
-        .tab-btn.active {
-            background: #667eea;
-            color: white;
-        }
-    </style>
-</head>
-<body>
-    <div class="game-container">
-        <div class="header">
-            <h1>🎮 動物配對挑戰</h1>
+      }
+    }
+
+    return { style, className };
+  };
+
+  // --- 渲染 ---
+  
+  // Shop Component
+  if (gameState === 'shop') {
+     // ... (保持不變，僅更新金幣顯示) ...
+     const shopItems = [
+       { id: 'bomb', name: '炸彈', icon: <Bomb size={24} />, price: 500, desc: '消除 3x3 區域' },
+       { id: 'magic', name: '魔法棒', icon: <Zap size={24} />, price: 800, desc: '消除一種動物' },
+       { id: 'shuffle', name: '重組', icon: <RefreshCw size={24} />, price: 300, desc: '重新排列版面' },
+    ];
+
+    return (
+       <div className="min-h-screen bg-indigo-900 flex flex-col items-center p-4 text-white">
+          <div className="w-full max-w-md flex justify-between items-center mb-8">
+             <h2 className="text-3xl font-bold flex items-center gap-2"><ShoppingCart /> 道具商店</h2>
+             <button onClick={() => setGameState('start')} className="p-2 bg-white/10 rounded-full"><X /></button>
+          </div>
+          <div className="bg-indigo-800 p-4 rounded-xl mb-6 w-full max-w-md flex justify-between items-center border border-indigo-600">
+             <span className="text-indigo-200">持有金幣</span>
+             <span className="text-2xl font-bold text-yellow-400 flex items-center gap-2">🪙 {coins}</span>
+          </div>
+          <div className="grid gap-4 w-full max-w-md">
+             {shopItems.map(item => (
+                <div key={item.id} className="bg-white/10 p-4 rounded-xl flex items-center justify-between border border-white/5 hover:bg-white/20 transition-colors">
+                   <div className="flex items-center gap-4">
+                      <div className="p-3 bg-indigo-600 rounded-lg">{item.icon}</div>
+                      <div>
+                         <h3 className="font-bold text-lg">{item.name}</h3>
+                         <p className="text-xs text-indigo-300">{item.desc}</p>
+                         <p className="text-xs text-green-300 mt-1">持有: {items[item.id]}</p>
+                      </div>
+                   </div>
+                   <button 
+                      disabled={coins < item.price}
+                      onClick={() => {
+                         setCoins(c => c - item.price);
+                         setItems(prev => ({ ...prev, [item.id]: prev[item.id] + 1 }));
+                      }}
+                      className={`px-4 py-2 rounded-lg font-bold ${coins >= item.price ? 'bg-yellow-500 text-yellow-900 hover:bg-yellow-400' : 'bg-gray-600 text-gray-400'}`}
+                   >
+                      ${item.price}
+                   </button>
+                </div>
+             ))}
+             <div className="bg-gradient-to-r from-purple-600 to-pink-600 p-4 rounded-xl flex items-center justify-between mt-4 shadow-lg cursor-pointer active:scale-95 transition-transform"
+                  onClick={() => {
+                     alert('廣告播放中... (模擬)');
+                     setTimeout(() => {
+                        setItems(prev => ({...prev, bomb: prev.bomb+1}));
+                        alert('獲得獎勵：炸彈 x1');
+                     }, 1000);
+                  }}
+             >
+                 <div className="flex items-center gap-3">
+                    <Video size={24} />
+                    <div>
+                       <h3 className="font-bold">觀看廣告</h3>
+                       <p className="text-xs opacity-80">免費獲得隨機道具</p>
+                    </div>
+                 </div>
+                 <span className="bg-white/20 px-2 py-1 rounded text-xs font-bold">FREE</span>
+             </div>
+          </div>
+       </div>
+    );
+  }
+  
+  // Start & GameOver Screens (Same as before but refined)
+  if (gameState === 'start') {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-amber-100 text-amber-900 p-4">
+        <div className="bg-white p-8 rounded-3xl shadow-xl border-4 border-amber-400 text-center max-w-sm w-full">
+          <div className="text-6xl mb-4 animate-bounce">🦁</div>
+          <h1 className="text-4xl font-black mb-2 text-amber-600">ZOO MASTER</h1>
+          <p className="text-gray-500 mb-6 font-bold">極速消除・Level 1-100</p>
+          
+          <div className="flex justify-center gap-4 mb-8">
+             <button onClick={() => setGameState('shop')} className="flex flex-col items-center gap-1 text-sm font-bold text-amber-700 hover:scale-110 transition-transform">
+                <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center text-blue-600"><ShoppingCart size={20}/></div>
+                商店
+             </button>
+             <div className="flex flex-col items-center gap-1 text-sm font-bold text-amber-700">
+                <div className="w-12 h-12 bg-yellow-100 rounded-full flex items-center justify-center text-yellow-600">🪙 {coins}</div>
+                金幣
+             </div>
+          </div>
+
+          <button 
+            onClick={() => { setGameState('playing'); setScore(0); setLevel(1); setTimeLeft(60); setBoard(createInitialBoard()); }}
+            className="w-full bg-green-500 hover:bg-green-600 text-white font-black text-xl py-4 rounded-2xl shadow-lg transition-transform active:scale-95 flex items-center justify-center gap-2"
+          >
+            <Play size={24} fill="currentColor" /> 開始挑戰
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (gameState === 'gameover') {
+     return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-gray-800 text-white p-4">
+        <div className="bg-gray-900 p-8 rounded-3xl shadow-2xl border-4 border-gray-700 text-center max-w-sm w-full">
+          <Skull size={64} className="mx-auto mb-4 text-red-500 animate-pulse" />
+          <h2 className="text-3xl font-black mb-2 text-red-400">GAME OVER</h2>
+          <div className="text-gray-400 font-bold mb-1">Level {level}</div>
+          <div className="text-5xl font-mono font-bold text-yellow-400 mb-2">{score}</div>
+          <p className="text-gray-400 text-sm mb-6">獲得金幣: +{Math.floor(score/100)}</p>
+
+          <div className="flex gap-3">
+             <button onClick={() => setGameState('shop')} className="flex-1 bg-indigo-600 hover:bg-indigo-700 py-3 rounded-xl font-bold">去商店</button>
+             <button onClick={() => setGameState('start')} className="flex-1 bg-green-600 hover:bg-green-700 py-3 rounded-xl font-bold">回首頁</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Main Game View
+  const nextLevelScore = getLevelThreshold(level);
+  
+  return (
+    <div className="min-h-screen bg-sky-100 flex flex-col items-center justify-center p-4 font-sans select-none overflow-hidden touch-none">
+      {/* HUD */}
+      <div className="w-full max-w-md mb-2 flex justify-between items-end px-2">
+        <div>
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-bold text-sky-600 uppercase bg-sky-200 px-2 py-0.5 rounded-full">Level {level}</span>
+            <span className="text-xs text-sky-400 font-bold">Next: {nextLevelScore}</span>
+          </div>
+          <div className="text-3xl font-black text-sky-900 flex items-center gap-2">
+            <Trophy size={24} className="text-yellow-500" />
+            {score}
+          </div>
         </div>
         
-        <div class="mode-selector">
-            <button class="mode-btn active" onclick="selectMode('classic')">♾️ 經典</button>
-            <button class="mode-btn" onclick="selectMode('score')">🎯 1000分</button>
-            <button class="mode-btn" onclick="selectMode('time')">⏱️ 2分鐘</button>
+        <div className="flex-1 ml-4 flex flex-col items-end">
+          <div className={`text-xl font-mono font-bold mb-1 flex items-center gap-1 ${timeLeft < 10 ? 'text-red-600 animate-pulse' : 'text-gray-700'}`}>
+             {timeLeft < 10 && <AlertTriangle size={16} />}
+             {timeLeft.toFixed(1)}s
+          </div>
+          <div className="w-full h-3 bg-gray-300 rounded-full overflow-hidden border border-gray-400 relative">
+            <div 
+              className={`h-full transition-all duration-100 ${timeLeft < 10 ? 'bg-red-500' : 'bg-green-500'}`} 
+              style={{ width: `${Math.min(100, (timeLeft / 60) * 100)}%` }}
+            ></div>
+          </div>
         </div>
-        
-        <div class="mode-info" id="modeInfo">
-            <strong>經典模式</strong>
-            消除鄰近相同動物!沒有可消除時自動洗牌+500分<br>
-            <small>⚠️ COMBO每4次出現1顆炸彈! 踩到直接結束!</small>
+      </div>
+
+      {/* Floating Message */}
+      <div className="h-12 w-full flex items-center justify-center pointer-events-none z-20 relative">
+        {message && (
+          <div 
+             className={`absolute text-4xl font-black ${message.color} drop-shadow-lg transition-transform duration-200`}
+             style={{ transform: `scale(${message.scale})` }}
+          >
+            {message.text}
+          </div>
+        )}
+      </div>
+
+      {/* Game Board */}
+      <div className="bg-amber-200 p-2 rounded-xl shadow-xl border-b-8 border-amber-300 relative">
+        <div 
+          className="grid grid-cols-8 gap-1 bg-amber-800/20 p-1 rounded-lg relative touch-none"
+          style={{ cursor: activeItem ? 'crosshair' : 'default' }}
+        >
+          {board.map((row, r) => (
+            row.map((animal, c) => {
+              const { style, className } = getTileStyle(r, c);
+              
+              return (
+                <div key={`${r}-${c}`} className="w-10 h-10 sm:w-12 sm:h-12 relative">
+                  {/* Background Grid Cell */}
+                  <div className="absolute inset-0 bg-black/10 rounded-md" />
+                  
+                  {/* The Animal Tile */}
+                  {animal && (
+                    <div
+                      onPointerDown={(e) => handlePointerDown(e, r, c)}
+                      onPointerUp={handlePointerUp}
+                      onPointerLeave={handlePointerUp}
+                      className={`${className} bg-white/90 rounded-md shadow-sm text-2xl sm:text-3xl
+                        ${activeItem === 'bomb' ? 'hover:bg-red-200' : ''}
+                        ${activeItem === 'magic' ? 'hover:bg-purple-200' : ''}
+                      `}
+                      style={style}
+                    >
+                      {animal}
+                    </div>
+                  )}
+
+                  {/* Effects Layer */}
+                  {effects.filter(e => e.r === r && e.c === c).map(e => (
+                     <div key={e.id} className="absolute inset-0 flex items-center justify-center pointer-events-none z-30">
+                        {e.type === 'explosion' && (
+                           <div className="w-16 h-16 bg-red-500 rounded-full animate-ping opacity-75 absolute"></div>
+                        )}
+                        {e.type === 'sparkle' && (
+                           <div className="text-yellow-400 animate-spin"><Sparkles size={32}/></div>
+                        )}
+                        {e.type === 'levelup' && (
+                           <div className="absolute text-yellow-400 animate-ping scale-150"><Star size={48} fill="currentColor" /></div>
+                        )}
+                     </div>
+                  ))}
+                </div>
+              );
+            })
+          ))}
         </div>
-        
-        <div id="warningBox" style="display:none;" class="warning-box">
-            ⚠️ 場上有炸彈! 小心別踩到! 💣
-        </div>
-        
-        <div class="score-board">
-            <div class="score-item">
-                <div class="score-label">分數</div>
-                <div class="score-value" id="score">0</div>
-            </div>
-            <div class="score-item">
-                <div class="score-label">連擊</div>
-                <div class="score-value" id="extraValue">0</div>
-                <div class="combo-multiplier" id="comboMultiplier"></div>
-            </div>
-            <div class="score-item">
-                <div class="score-label">移動</div>
-                <div class="score-value" id="moves">0</div>
-            </div>
-        </div>
-        
-        <div class="grid" id="grid"></div>
-        
-        <div class="controls">
-            <button class="btn-new-game" onclick="newGame()">🔄 新遊戲</button>
-            <button class="btn-leaderboard" onclick="showLeaderboard()">🏆 排行榜</button>
-        </div>
+      </div>
+
+      {/* Items */}
+      <div className="w-full max-w-md mt-4 grid grid-cols-3 gap-3 px-2">
+        <button 
+          onClick={() => activeItem === 'bomb' ? setActiveItem(null) : setActiveItem('bomb')}
+          disabled={items.bomb === 0 || isProcessing}
+          className={`flex flex-col items-center p-2 rounded-xl border-b-4 transition-all active:scale-95 relative
+            ${activeItem === 'bomb' ? 'bg-red-100 border-red-500' : 'bg-white border-gray-200'}
+            ${items.bomb === 0 ? 'opacity-50 grayscale' : ''}
+          `}
+        >
+          <Bomb size={24} className="text-gray-700 mb-1" />
+          <span className="text-xs font-bold text-gray-500">炸彈</span>
+          <span className="absolute top-0 right-0 bg-red-500 text-white text-xs w-5 h-5 rounded-full flex items-center justify-center font-bold shadow">{items.bomb}</span>
+          <div onClick={(e) => { e.stopPropagation(); alert('看廣告補充炸彈... (模擬)'); setItems(p => ({...p, bomb: p.bomb+1})); }} 
+               className="absolute -top-2 -left-2 bg-blue-500 text-white rounded-full w-6 h-6 flex items-center justify-center border-2 border-white cursor-pointer z-10 shadow-sm"
+          >
+             <Video size={12} />
+          </div>
+        </button>
+
+        <button 
+          onClick={() => activeItem === 'magic' ? setActiveItem(null) : setActiveItem('magic')}
+          disabled={items.magic === 0 || isProcessing}
+          className={`flex flex-col items-center p-2 rounded-xl border-b-4 transition-all active:scale-95 relative
+            ${activeItem === 'magic' ? 'bg-purple-100 border-purple-500' : 'bg-white border-gray-200'}
+            ${items.magic === 0 ? 'opacity-50 grayscale' : ''}
+          `}
+        >
+          <Zap size={24} className="text-purple-600 mb-1" />
+          <span className="text-xs font-bold text-gray-500">魔法棒</span>
+          <span className="absolute top-0 right-0 bg-red-500 text-white text-xs w-5 h-5 rounded-full flex items-center justify-center font-bold shadow">{items.magic}</span>
+        </button>
+
+        <button 
+          onClick={useShuffle}
+          disabled={items.shuffle === 0 || isProcessing}
+          className={`flex flex-col items-center p-2 rounded-xl border-b-4 bg-white border-gray-200 transition-all active:scale-95 relative
+            ${items.shuffle === 0 ? 'opacity-50 grayscale' : ''}
+          `}
+        >
+          <RefreshCw size={24} className="text-green-600 mb-1" />
+          <span className="text-xs font-bold text-gray-500">重組</span>
+          <span className="absolute top-0 right-0 bg-red-500 text-white text-xs w-5 h-5 rounded-full flex items-center justify-center font-bold shadow">{items.shuffle}</span>
+        </button>
+      </div>
+      
+      <div className="text-gray-400 text-xs mt-4 font-bold uppercase tracking-widest">No Pause • No Mercy</div>
     </div>
-    
-    <div class="modal" id="gameOverModal">
-        <div class="modal-content">
-            <h2 id="gameOverTitle">🎉 遊戲結束!</h2>
-            <div class="final-score" id="finalScore">0</div>
-            <p id="gameOverStats"></p>
-            <div class="name-input-section" id="nameInputSection" style="display:none;">
-                <h3>🌟 恭喜進入前20名!</h3>
-                <input type="text" class="name-input" id="playerName" placeholder="輸入你的名字" maxlength="10">
-                <button class="submit-score-btn" onclick="submitScore()">提交分數</button>
-            </div>
-            <button class="btn-new-game" onclick="closeGameOver()">再玩一次</button>
-        </div>
-    </div>
-    
-    <div class="modal" id="leaderboardModal">
-        <div class="modal-content">
-            <h2>🏆 排行榜</h2>
-            <div class="tab-buttons">
-                <button class="tab-btn active" onclick="switchLeaderboard('classic')">經典</button>
-                <button class="tab-btn" onclick="switchLeaderboard('score')">1000分</button>
-                <button class="tab-btn" onclick="switchLeaderboard('time')">2分鐘</button>
-            </div>
-            <div id="leaderboardContent"></div>
-            <button class="btn-new-game" onclick="closeLeaderboard()">關閉</button>
-        </div>
-    </div>
-
-    <script>
-        var score = 0, combo = 0, maxCombo = 0, moves = 0;
-        var selectedTile = null, tiles = [], canClick = true;
-        var gameMode = 'classic', timer = 0, timerInterval = null;
-        var startTime = 0, lastMatchTime = 0, comboTimeout = null;
-        var bombPositions = [], matchCountSinceBomb = 0;
-        var GRID_SIZE = 16, TIME_LIMIT = 120, SCORE_TARGET = 1000, COMBO_TIME_LIMIT = 2000;
-        var ANIMALS = ['🐶', '🐱', '🐭', '🐹', '🐰', '🐻', '🐼', '🐨'], BOMB = '💣';
-
-        function initGame() {
-            score = 0; combo = 0; maxCombo = 0; moves = 0;
-            selectedTile = null; canClick = true; timer = 0;
-            lastMatchTime = 0; bombPositions = []; matchCountSinceBomb = 0;
-            if (comboTimeout) clearTimeout(comboTimeout);
-            if (timerInterval) clearInterval(timerInterval);
-            tiles = [];
-            for (var i = 0; i < GRID_SIZE; i++) {
-                tiles.push(Math.floor(Math.random() * ANIMALS.length));
-            }
-            if (gameMode === 'time') { timer = TIME_LIMIT; startTimer(); }
-            if (gameMode === 'score') startTime = Date.now();
-            updateWarningBox(); renderGrid(); updateScore();
-        }
-
-        function selectMode(mode) {
-            gameMode = mode;
-            document.querySelectorAll('.mode-btn').forEach(function(b) { b.classList.remove('active'); });
-            event.target.classList.add('active');
-            initGame();
-        }
-
-        function updateWarningBox() {
-            document.getElementById('warningBox').style.display = bombPositions.length > 0 ? 'block' : 'none';
-        }
-
-        function startTimer() {
-            timerInterval = setInterval(function() {
-                timer--;
-                updateScore();
-                if (timer <= 0) { clearInterval(timerInterval); endGame(); }
-            }, 1000);
-        }
-
-        function renderGrid() {
-            var grid = document.getElementById('grid');
-            grid.innerHTML = '';
-            tiles.forEach(function(animalIndex, index) {
-                var tile = document.createElement('button');
-                tile.className = 'tile';
-                if (bombPositions.indexOf(index) !== -1) {
-                    tile.textContent = BOMB;
-                    tile.classList.add('bomb');
-                } else {
-                    tile.textContent = ANIMALS[animalIndex];
-                }
-                tile.type = 'button';
-                tile.onclick = function() { selectTile(index); };
-                grid.appendChild(tile);
-            });
-        }
-
-        function getNeighbors(index) {
-            var row = Math.floor(index / 4), col = index % 4, neighbors = [];
-            if (row > 0) neighbors.push(index - 4);
-            if (row < 3) neighbors.push(index + 4);
-            if (col > 0) neighbors.push(index - 1);
-            if (col < 3) neighbors.push(index + 1);
-            return neighbors;
-        }
-
-        function areNeighbors(i1, i2) {
-            return getNeighbors(i1).indexOf(i2) !== -1;
-        }
-
-        function getComboMultiplier(c) {
-            if (c >= 11) return 3;
-            if (c >= 6) return 2;
-            if (c >= 2) return 1.5;
-            return 1;
-        }
-
-        function updateComboDisplay() {
-            var mult = document.getElementById('comboMultiplier');
-            var extra = document.getElementById('extraValue');
-            extra.textContent = combo;
-            if (combo >= 2) {
-                mult.textContent = 'x' + getComboMultiplier(combo) + ' 倍';
-                extra.classList.add('combo-active');
-            } else {
-                mult.textContent = '';
-                extra.classList.remove('combo-active');
-            }
-        }
-
-        function startComboTimer() {
-            if (comboTimeout) clearTimeout(comboTimeout);
-            comboTimeout = setTimeout(function() { combo = 0; updateComboDisplay(); }, COMBO_TIME_LIMIT);
-        }
-
-        function spawnBombs() {
-            var bombCount = Math.min(8, Math.floor(combo / 4));
-            if (bombCount === 0) return;
-            
-            var empty = [];
-            for (var i = 0; i < GRID_SIZE; i++) {
-                if (bombPositions.indexOf(i) === -1) empty.push(i);
-            }
-            
-            for (var i = 0; i < bombCount && empty.length > 0; i++) {
-                var idx = Math.floor(Math.random() * empty.length);
-                bombPositions.push(empty[idx]);
-                empty.splice(idx, 1);
-            }
-            matchCountSinceBomb = 0;
-            updateWarningBox(); renderGrid();
-        }
-
-        function selectTile(index) {
-            if (!canClick) return;
-            if (bombPositions.indexOf(index) !== -1) {
-                endGameByBomb(); return;
-            }
-            var tileElements = document.getElementById('grid').children;
-            if (selectedTile === null) {
-                selectedTile = index;
-                tileElements[index].classList.add('selected');
-            } else if (selectedTile === index) {
-                tileElements[index].classList.remove('selected');
-                selectedTile = null;
-            } else {
-                if (!areNeighbors(selectedTile, index)) {
-                    tileElements[selectedTile].classList.remove('selected');
-                    selectedTile = index;
-                    tileElements[index].classList.add('selected');
-                    return;
-                }
-                moves++;
-                if (tiles[selectedTile] === tiles[index]) {
-                    canClick = false;
-                    var currentTime = Date.now();
-                    if (lastMatchTime === 0 || (currentTime - lastMatchTime) <= COMBO_TIME_LIMIT) {
-                        combo++;
-                    } else {
-                        combo = 1;
-                    }
-                    lastMatchTime = currentTime;
-                    maxCombo = Math.max(maxCombo, combo);
-                    score += Math.floor(10 * getComboMultiplier(combo));
-                    startComboTimer();
-                    tileElements[selectedTile].classList.add('matched');
-                    tileElements[index].classList.add('matched');
-                    var idx1 = selectedTile, idx2 = index;
-                    matchCountSinceBomb++;
-                    
-                    if (combo > 0 && combo % 4 === 0) {
-                        spawnBombs();
-                    }
-                    
-                    if (matchCountSinceBomb >= 2 && bombPositions.length > 0) {
-                        bombPositions = [];
-                        updateWarningBox();
-                    }
-                    
-                    setTimeout(function() {
-                        tiles[idx1] = Math.floor(Math.random() * ANIMALS.length);
-                        tiles[idx2] = Math.floor(Math.random() * ANIMALS.length);
-                        
-                        console.log('消除後檢查是否有可移動...');
-                        var hasMove = hasValidMoves();
-                        console.log('檢查結果:', hasMove);
-                        
-                        if (!hasMove) {
-                            console.log('觸發洗牌!');
-                            shuffleBoard();
-                        } else {
-                            renderGrid();
-                        }
-                        
-                        if (gameMode === 'score' && score >= SCORE_TARGET) {
-                            timer = Math.floor((Date.now() - startTime) / 1000);
-                            endGame();
-                        } else {
-                            canClick = true;
-                        }
-                    }, 500);
-                } else {
-                    combo = 0; updateComboDisplay();
-                    tileElements[selectedTile].classList.remove('selected');
-                }
-                selectedTile = null;
-                updateScore();
-            }
-        }
-
-        function hasValidMoves() {
-            // 檢查每個格子是否有相鄰的相同動物可以配對
-            for (var i = 0; i < GRID_SIZE; i++) {
-                // 跳過炸彈格子
-                if (bombPositions.indexOf(i) !== -1) continue;
-                
-                var neighbors = getNeighbors(i);
-                for (var j = 0; j < neighbors.length; j++) {
-                    var neighborIdx = neighbors[j];
-                    // 檢查鄰居也不是炸彈,且動物相同
-                    if (bombPositions.indexOf(neighborIdx) === -1) {
-                        if (tiles[i] === tiles[neighborIdx]) {
-                            console.log('找到可消除配對: 位置', i, '和', neighborIdx, '動物:', ANIMALS[tiles[i]]);
-                            return true;
-                        }
-                    }
-                }
-            }
-            console.log('沒有可消除的配對,準備洗牌');
-            return false;
-        }
-
-        function shuffleBoard() {
-            console.log('執行洗牌! 當前分數:', score);
-            score += 500;
-            
-            // 清除所有炸彈
-            bombPositions = [];
-            matchCountSinceBomb = 0;
-            
-            // 重新生成所有動物(不包含炸彈)
-            for (var i = 0; i < GRID_SIZE; i++) {
-                tiles[i] = Math.floor(Math.random() * ANIMALS.length);
-            }
-            
-            // 確保洗牌後有可消除的配對
-            var maxAttempts = 10;
-            var attempts = 0;
-            while (!hasValidMoves() && attempts < maxAttempts) {
-                for (var i = 0; i < GRID_SIZE; i++) {
-                    tiles[i] = Math.floor(Math.random() * ANIMALS.length);
-                }
-                attempts++;
-            }
-            
-            lastMatchTime = Date.now();
-            startComboTimer();
-            updateWarningBox();
-            renderGrid();
-            updateScore();
-            console.log('洗牌完成! 新分數:', score);
-        }
-
-        function updateScore() {
-            document.getElementById('score').textContent = score;
-            document.getElementById('moves').textContent = moves;
-            updateComboDisplay();
-        }
-
-        function endGameByBomb() {
-            canClick = false;
-            if (timerInterval) clearInterval(timerInterval);
-            document.getElementById('gameOverTitle').textContent = '💥 踩到炸彈!';
-            document.getElementById('gameOverStats').innerHTML = '最終分數: <strong>' + score + '</strong><br>連擊: ' + maxCombo + 'x';
-            document.getElementById('finalScore').textContent = score;
-            document.getElementById('gameOverModal').classList.add('show');
-        }
-
-        function endGame() {
-            canClick = false;
-            if (timerInterval) clearInterval(timerInterval);
-            document.getElementById('gameOverTitle').textContent = '🎉 遊戲結束!';
-            document.getElementById('gameOverStats').innerHTML = '最終分數: <strong>' + score + '</strong><br>連擊: ' + maxCombo + 'x';
-            document.getElementById('finalScore').textContent = score;
-            document.getElementById('gameOverModal').classList.add('show');
-        }
-
-        function closeGameOver() {
-            document.getElementById('gameOverModal').classList.remove('show');
-            newGame();
-        }
-
-        function newGame() { initGame(); }
-
-        async function submitScore() {
-            var name = document.getElementById('playerName').value.trim();
-            if (!name) { alert('請輸入名字!'); return; }
-            try {
-                await window.storage.set('leaderboard_' + gameMode + ':' + Date.now(), JSON.stringify({
-                    name: name, score: score, moves: moves, combo: maxCombo
-                }));
-                alert('分數已提交!');
-            } catch (e) { alert('提交失敗'); }
-        }
-
-        async function showLeaderboard() {
-            document.getElementById('leaderboardModal').classList.add('show');
-        }
-
-        function closeLeaderboard() {
-            document.getElementById('leaderboardModal').classList.remove('show');
-        }
-
-        async function switchLeaderboard(mode) {
-            document.querySelectorAll('.tab-btn').forEach(function(b) { b.classList.remove('active'); });
-            event.target.classList.add('active');
-        }
-
-        initGame();
-    </script>
-</body>
-</html>
+  );
+}
